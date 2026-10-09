@@ -1,120 +1,14 @@
 <!doctype html>
 <html>
   <head>
-    <title>Zeitnot</title>
+    <title>Zeitnot (reimplemented)</title>
     <meta name="description" content="Study openings to never get into zeitnot again.">
-    <meta name="og:title" content="Zeitnot ⊕">
-    <meta name="og:description" content="Study openings to never get into zeitnot again.">
-    <meta name="og:url" content="https://zeitnot.hellauer.bayern/">
-    <meta name="color-scheme" content="dark light">
-    <link rel="icon" type="image/x-icon" href="favicon.ico">
-    <link rel="stylesheet" type="text/css" href="style.css">
-    <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/cm-chessboard@8.15.3/assets/chessboard.css">
-    <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/cm-chessboard@8.15.3/assets/extensions/markers/markers.css">
-    <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/cm-chessboard@8.15.3/assets/extensions/arrows/arrows.css">
-    <script type="module" src="app.js"></script>
+    <link rel="stylesheet" href="style.css">
+    <script type="module" src="src/app.js"></script>
   </head>
   <body>
-    <div id="headerContainer">
-      <img id="logo" src="img/logo.svg" alt="zeitnot">
-      <div id="header">
-        <div id="title">Zeitnot</div>
-      </div>
-      <div style="clear: both;"></div>
-    </div>
-    <div id="modeButtons">
-      <div id="studyButton" class="modeButton selectable" title="Go to Study mode (Shortcut: S)">Study</div>
-      <div id="buildButton" class="modeButton selectable" title="Go to Build mode (Shortcut: B)">Build</div>
-      <div id="evaluateButton" class="modeButton selectable" title="Go to Review mode (Shortcut: R)">Review</div>
-    </div>
-    <div id="studyMode" class="hidden">
-      <div id="emptyStudy" class="helpText hidden">
-        <p>Your repertoire is empty!
-        <p>Click "Build" to add moves to your repertoire.
-        <p>Then click "Study" to practice them!
-      </div>
-      <div id="studyMessage"></div>
-      <div id="studyBoard"></div>
-    </div>
-    <div id="buildMode">
-      <div id="buildModeLeft">
-        <div id="buildBoard"></div>
-        <div style="clear: both;"></div>
-        <label id="colorChooserLabel">
-          Repertoire for
-          <select id="colorChooser" title="Repertoire color (Shortcut: F)">
-            <option value="w">White</option>
-            <option value="b">Black</option>
-          </select>
-        </label>
-      </div>
-      <div id="buildModeRight">
-        <input id="renameInput" maxlength=200>
-        <div id="buildTreeViewOuter">
-          <div id="buildTreeViewInner"></div>
-        </div>
-        <div id="buildTreeButtons" class="treeButtons">
-          <img id="buildTreeLeft" class="treeLeft" src="img/left.svg" title="Go back one move (Shortcut: Left arrow)">
-          <img id="buildTreeRight" class="treeRight" src="img/left.svg" title="Go forward one move (Shortcut: Right arrow)">
-          <img id="buildTreeTrash" class="treeTrash" src="img/trash.svg" title="Delete this move (Shortcut: Backspace)">
-          <img id="buildTreeExport" class="treeExport" src="img/export.svg" title="Download this repertoire as a PGN file">
-        </div>
-        <div id="emptyBuild" class="helpText hidden">
-          <p>Your repertoire is empty!
-          <p>Make moves on the board to add them to your repertoire.
-          <p>Then click "Study" to practice them!
-          <p id="exampleRepertoire">(Click here to try an example repertoire.)
-        </div>
-        <div id="importPgn">
-          <textarea id="importPgnTextArea" placeholder="Paste PGN here"></textarea>
-          <input id="importPgnUpload" type="file" accept=".pgn">
-          <button id="importPgnOk" type="button" disabled>Import</button>
-          <div id="importStatus"></div>
-        </div>
-      </div>
-    </div>
-    <div id="evaluateMode" class="hidden">
-      <div class="col3">
-        <div id="evaluateBoard"></div>
-      </div>
-      <div class="col3">
-        <div id="repertoireNameLabel"></div>
-        <div id="emptyEvaluate" class="helpText hidden">
-          <p>Your repertoire is empty!
-          <p>Click "Build" to add moves to your repertoire.
-          <p>Then click "Study" to practice them!
-        </div>
-        <div id="evaluateTreeViewOuter">
-          <div id="evaluateTreeViewInner"></div>
-        </div>
-        <div id="evaluateTreeButtons" class="treeButtons">
-          <img id="evaluateTreeLeft" class="treeLeft" src="img/left.svg" title="Go back one move (Shortcut: Left arrow)">
-          <img id="evaluateTreeRight" class="treeRight" src="img/left.svg" title="Go forward one move (Shortcut: Right arrow)">
-        </div>
-      </div>
-      <div class="col3">
-        <div id="insightsPanel"></div>
-      </div>
-    </div>
-    <div id="picker">
-      <div id="addMetadata">
-        <img src="img/plus.svg">
-        <span>Add a new repertoire</span>
-      </div>
-    </div>
-    <div id="status"></div>
-    <div id="footer">
-      <a id="sourceCodeLink" href="https://github.com/xaverh/zeitnot" target="_blank">Source</a>
-    </div>
-    <div id="fixedBottomButtons">
-      <label id="boardStyleLabel">
-        Board
-        <select id="boardStyle"></select>
-      </label>
-      <label id="pieceStyleLabel">
-        Pieces
-        <select id="pieceStyle"></select>
-      </label>
-    </div>
+    <h1>Zeitnot — new model demo</h1>
+    <p>Open the console to see the pure model + IndexedDB + SM-2 in action.</p>
+    <p>Core pure modules live in <code>src/model/</code>. Storage in <code>src/store/</code>.</p>
   </body>
 </html>
