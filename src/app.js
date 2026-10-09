@@ -6,6 +6,7 @@ import { START_FEN_NORMALIZED } from './model/fen.js'
 import { loadMoveMap, getTreeProjection } from './ui/adapter.js'
 import { handleBuildMove } from './ui/buildMode.js'
 import { pickNextStudyMove, recordStudyAttempt } from './ui/studyMode.js'
+import { computeInsights, renderInsights } from './ui/reviewMode.js'
 import { refreshTree } from './ui/treeRenderer.js'
 
 async function main () {
@@ -61,6 +62,17 @@ async function main () {
     // Simulate a correct answer
     await recordStudyAttempt(db, rep.id, next.move.id, true)
     setStatus(`Reviewed ${next.move.san} as correct.`)
+  })
+
+  // Demo Review
+  document.getElementById('review')?.addEventListener('click', async () => {
+    const moveMap = await loadMoveMap(db)
+    const stats = await getAll(db, 'statistics')
+    const statMap = new Map(stats.map(s => [s.id, s]))
+    const insights = computeInsights(rep, moveMap, statMap)
+    const el = document.getElementById('insights')
+    if (el) renderInsights(el, insights)
+    setStatus('Review insights updated.')
   })
 }
 
