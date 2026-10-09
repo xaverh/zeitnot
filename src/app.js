@@ -1,44 +1,67 @@
-// Main entry. Wires the pure model to a minimal UI shell.
-// Full original UI can be progressively adapted to these pure functions.
+// Main entry. Wires pure model + modes.
 
-import { openDb, put, getAll } from './store/idb.js'
-import { exportAll } from './store/json.js'
-import { createRepertoire, addEdge } from './model/repertoire.js'
-import { createMove } from './model/move.js'
-import { projectTree } from './model/project.js'
-import { createStatistic, review, priorityScore } from './model/statistics.js'
+import { openDb, put, getAll, get } from './store/idb.js'
+import { createRepertoire } from './model/repertoire.js'
 import { START_FEN_NORMALIZED } from './model/fen.js'
+import { loadMoveMap, getTreeProjection } from './ui/adapter.js'
+import { handleBuildMove } from './ui/buildMode.js'
+import { pickNextStudyMove, recordStudyAttempt } from './ui/studyMode.js'
+import { refreshTree } from './ui/treeRenderer.js'
 
 async function main () {
   const db = await openDb()
 
-  // Example: create a repertoire and add e4
-  let rep = createRepertoire('demo', 'Demo Repertoire', 'w', START_FEN_NORMALIZED)
-  const e4 = createMove(START_FEN_NORMALIZED, { from: 'e2', to: 'e4' })
-  await put(db, 'positions', { fen: e4.fromFen })
-  await put(db, 'positions', { fen: e4.toFen })
-  await put(db, 'moves', e4)
-  rep = addEdge(rep, e4.id, e4.fromFen, e4.toFen)
-  await put(db, 'repertoires', rep)
+  // Ensure a demo repertoire exists
+  let reps = await getAll(db, 'repertoires')
+  let rep = reps.find(r => r.id === 'demo')
+  if (!rep) {
+    rep = createRepertoire('demo', 'Demo Repertoire', 'w', START_FEN_NORMALIZED)
+    await put(db, 'repertoires', rep)
+  }
 
-  // Statistics with SM-2
-  let stat = createStatistic(rep.id, e4.id)
-  stat = review(stat, false) // wrong
-  stat = review(stat, true)  // right
-  await put(db, 'statistics', stat)
+  const status = document.getElementById('status')
+  const treeEl = document.getElementById('tree')
+  const setStatus = (msg) => { if (status) status.textContent = msg }
 
-  // Projection
-  const moves = new Map((await getAll(db, 'moves')).map(m => [m.id, m]))
-  const positions = new Map()
-  const tree = projectTree(rep, positions, moves)
-  console.log('Projected tree root children:', tree.children.map(c => c.san))
+  async function refresh () {
+    const moveMap = await loadMoveMap(db)
+    const tree = getTreeProjection(rep, moveMap)
+    if (treeEl) {
+      refreshTree(treeEl, tree, (fen) => setStatus('Jumped to transposition: ' + fen))
+    }
+    return { moveMap, tree }
+  }
 
-  // Export
-  const exported = await exportAll(db)
-  console.log('Export ready, repertoires:', exported.repertoires.length)
+  await refresh()
+  setStatus('Ready. Build mode adds moves; Study uses SM-2 priority.')
 
-  // Priority
-  console.log('Priority score for e4:', priorityScore(stat))
+  // Demo Build: add e4 if not present
+  document.getElementById('addE4')?.addEventListener('click', async () => {
+    try {
+      const result = await handleBuildMove(db, rep, START_FEN_NORMALIZED, { from: 'e2', to: 'e4' })
+      rep = result.repertoire
+      await refresh()
+      setStatus('Added e4. Tree updated.')
+    } catch (e) {
+      setStatus('Build error: ' + e.message)
+    }
+  })
+
+  // Demo Study: pick highest priority and "review" it
+  document.getElementById('studyNext')?.addEventListener('click', async () => {
+    const moveMap = await loadMoveMap(db)
+    const stats = await getAll(db, 'statistics')
+    const statMap = new Map(stats.map(s => [s.id, s]))
+    const next = pickNextStudyMove(rep, moveMap, statMap)
+    if (!next) {
+      setStatus('No moves to study yet. Add some in Build.')
+      return
+    }
+    setStatus(`Studying ${next.move.san} (score ${next.score.toFixed(1)})`)
+    // Simulate a correct answer
+    await recordStudyAttempt(db, rep.id, next.move.id, true)
+    setStatus(`Reviewed ${next.move.san} as correct.`)
+  })
 }
 
 if (typeof window !== 'undefined') {

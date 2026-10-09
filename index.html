@@ -1,14 +1,21 @@
 <!doctype html>
 <html>
   <head>
-    <title>Zeitnot (reimplemented)</title>
+    <title>Zeitnot — model integration</title>
     <meta name="description" content="Study openings to never get into zeitnot again.">
-    <link rel="stylesheet" href="style.css">
-    <script type="module" src="src/app.js"></script>
+    <style>
+      body { font-family: system-ui, sans-serif; background: #141414; color: #ececec; padding: 20px; }
+      button { margin: 8px 8px 8px 0; padding: 8px 14px; }
+      #tree { margin-top: 16px; border: 1px solid #2e2e2e; padding: 10px; max-width: 400px; }
+      #status { margin-top: 12px; color: #9a9a9a; }
+    </style>
   </head>
   <body>
-    <h1>Zeitnot — new model demo</h1>
-    <p>Open the console to see the pure model + IndexedDB + SM-2 in action.</p>
-    <p>Core pure modules live in <code>src/model/</code>. Storage in <code>src/store/</code>.</p>
+    <h1>Zeitnot — Build &amp; Study wired to pure model</h1>
+    <button id="addE4">Build: add e4</button>
+    <button id="studyNext">Study: review highest-priority move</button>
+    <div id="status"></div>
+    <div id="tree"></div>
+    <script type="module" src="src/app.js"></script>
   </body>
 </html>
