@@ -3004,3 +3004,176 @@ Main.run = function () {
 window.onload = function () {
   Main.run()
 }
+
+// =============================================================================
+// Phase 0 — Migration scaffolding (pure functional style)
+// Old localStorage path remains the only one used by the running app.
+// =============================================================================
+
+const ZEITNOT_VERSION_KEY = 'zeitnot-version'
+const ZEITNOT_PHASE0_VERSION = '0'
+
+function getZeitnotVersion (storage) {
+  return storage.getItem(ZEITNOT_VERSION_KEY)
+}
+
+function setZeitnotVersion (storage, version) {
+  storage.setItem(ZEITNOT_VERSION_KEY, version)
+}
+
+function isPhase0OrNewer (storage) {
+  const v = getZeitnotVersion(storage)
+  return v !== null && v >= ZEITNOT_PHASE0_VERSION
+}
+
+// Position-only FEN: piece placement + active color + castling + en-passant.
+// Halfmove clock and fullmove number are stripped.
+function normalizePositionFen (fen) {
+  if (!fen || typeof fen !== 'string') return ''
+  const parts = fen.trim().split(/\s+/)
+  if (parts.length < 4) return fen
+  return parts.slice(0, 4).join(' ')
+}
+
+// Deterministic edge id
+function makeMoveId (fromFen, toFen, promotion) {
+  return `${fromFen}|${toFen}|${promotion || ''}`
+}
+
+// Pure factories for the new data shapes (not yet persisted or used by UI)
+function createPosition (fen) {
+  const normalized = normalizePositionFen(fen)
+  const parts = normalized.split(' ')
+  return {
+    fen: normalized,
+    piecePlacement: parts[0] || '',
+    turn: parts[1] || 'w',
+    castling: parts[2] || '-',
+    enPassant: parts[3] || '-'
+  }
+}
+
+function createMove (fromFen, toFen, san, uci, promotion) {
+  const id = makeMoveId(fromFen, toFen, promotion)
+  return {
+    id,
+    fromFen: normalizePositionFen(fromFen),
+    toFen: normalizePositionFen(toFen),
+    san: san || '',
+    uci: uci || '',
+    promotion: promotion || null,
+    comments: []
+  }
+}
+
+function createRepertoire (id, name, color, rootFen) {
+  return {
+    id,
+    name: name || '',
+    color: color === 'b' ? 'b' : 'w',
+    rootFen: normalizePositionFen(rootFen),
+    citations: [],
+    edges: [],
+    commentOverrides: {},
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }
+}
+
+// SM-2 initial statistic
+function createStatistic (repertoireId, moveId) {
+  return {
+    id: `${repertoireId}|${moveId}`,
+    repertoireId,
+    moveId,
+    right: 0,
+    wrong: 0,
+    finishLine: 0,
+    lastReviewedAt: null,
+    lastWrongAt: null,
+    consecutiveCorrect: 0,
+    ease: 2.5,
+    intervalDays: 0,
+    nextDueAt: Date.now(),
+    recentWrongCount: 0,
+    totalAttempts: 0,
+    updatedAt: Date.now()
+  }
+}
+
+// IndexedDB open helper — creates empty stores, does not migrate or read yet
+const IDB_NAME = 'zeitnot'
+const IDB_VERSION = 1
+
+function openZeitnotDb () {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(IDB_NAME, IDB_VERSION)
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result
+      if (!db.objectStoreNames.contains('positions')) {
+        db.createObjectStore('positions', { keyPath: 'fen' })
+      }
+      if (!db.objectStoreNames.contains('moves')) {
+        const moves = db.createObjectStore('moves', { keyPath: 'id' })
+        moves.createIndex('fromFen', 'fromFen', { unique: false })
+        moves.createIndex('toFen', 'toFen', { unique: false })
+      }
+      if (!db.objectStoreNames.contains('repertoires')) {
+        const repertoires = db.createObjectStore('repertoires', { keyPath: 'id' })
+        repertoires.createIndex('name', 'name', { unique: false })
+        repertoires.createIndex('updatedAt', 'updatedAt', { unique: false })
+      }
+      if (!db.objectStoreNames.contains('statistics')) {
+        const statistics = db.createObjectStore('statistics', { keyPath: 'id' })
+        statistics.createIndex('repertoireId', 'repertoireId', { unique: false })
+        statistics.createIndex('moveId', 'moveId', { unique: false })
+      }
+    }
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error)
+  })
+}
+
+// Minimal self-check for the pure FEN normalizer (runs only when ?phase0test is present)
+function runPhase0SelfCheck () {
+  const start = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
+  const expected = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -'
+  const got = normalizePositionFen(start)
+  if (got !== expected) {
+    console.error('Phase 0 FEN normalizer failed:', got, '!==', expected)
+    return false
+  }
+  const withEp = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1'
+  const expectedEp = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3'
+  if (normalizePositionFen(withEp) !== expectedEp) {
+    console.error('Phase 0 en-passant preservation failed')
+    return false
+  }
+  console.log('Phase 0 self-check passed')
+  return true
+}
+
+// Initialize Phase 0 scaffolding on load (does not alter existing app behavior)
+function initPhase0 () {
+  try {
+    if (!getZeitnotVersion(window.localStorage)) {
+      setZeitnotVersion(window.localStorage, ZEITNOT_PHASE0_VERSION)
+    }
+    // Open DB in background so the schema exists; ignore result
+    openZeitnotDb().catch(() => {})
+    if (typeof location !== 'undefined' && location.search.includes('phase0test')) {
+      runPhase0SelfCheck()
+    }
+  } catch (e) {
+    // Never break the existing app
+  }
+}
+
+// Hook into existing startup without changing Main.run signature
+const originalOnLoad = window.onload
+window.onload = function () {
+  initPhase0()
+  if (typeof originalOnLoad === 'function') {
+    originalOnLoad()
+  }
+}
