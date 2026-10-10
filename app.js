@@ -417,6 +417,8 @@ TreeModel.prototype.addMove = function (pgn, move) {
   }
   // Select the new child node.
   this.selectedNode = childNode
+  // Phase 1 dual-write (fire-and-forget, does not affect return)
+  try { shadowWriteAfterAdd(this, pgn, childPosition) } catch (e) { /* ignore */ }
   return {
     success: true,
     failureReason: null
@@ -603,6 +605,8 @@ TreeModel.prototype.loadRepertoire = function (repertoire) {
     }
   }
   this.selectPgn('')
+  // Phase 1 dual-write of the whole repertoire (fire-and-forget)
+  try { shadowWriteRepertoire(this, repertoire) } catch (e) { /* ignore */ }
 }
 TreeModel.prototype.parseRecursive = function (node) {
   const children = node.children || node.c
@@ -3028,11 +3032,23 @@ function isPhase0OrNewer (storage) {
 
 // Position-only FEN: piece placement + active color + castling + en-passant.
 // Halfmove clock and fullmove number are stripped.
+// Position-only FEN that includes the en-passant square only when the capture is legal.
+// Relies on chess.js, which (since the fix for #252) only emits the square when legal.
+// Clocks are always stripped.
 function normalizePositionFen (fen) {
   if (!fen || typeof fen !== 'string') return ''
-  const parts = fen.trim().split(/\s+/)
-  if (parts.length < 4) return fen
-  return parts.slice(0, 4).join(' ')
+  try {
+    const chess = new Chess()
+    chess.load(fen)
+    const canonical = chess.fen()
+    const parts = canonical.trim().split(/\s+/)
+    return parts.slice(0, 4).join(' ')
+  } catch (e) {
+    // Fall back to string slicing if the FEN cannot be loaded
+    const parts = fen.trim().split(/\s+/)
+    if (parts.length < 4) return fen
+    return parts.slice(0, 4).join(' ')
+  }
 }
 
 // Deterministic edge id
@@ -3040,65 +3056,55 @@ function makeMoveId (fromFen, toFen, promotion) {
   return `${fromFen}|${toFen}|${promotion || ''}`
 }
 
-// Pure factories for the new data shapes (not yet persisted or used by UI)
-function createPosition (fen) {
+// Prototype-style constructors for the new data shapes
+function Position (fen) {
   const normalized = normalizePositionFen(fen)
   const parts = normalized.split(' ')
-  return {
-    fen: normalized,
-    piecePlacement: parts[0] || '',
-    turn: parts[1] || 'w',
-    castling: parts[2] || '-',
-    enPassant: parts[3] || '-'
-  }
+  this.fen = normalized
+  this.piecePlacement = parts[0] || ''
+  this.turn = parts[1] || 'w'
+  this.castling = parts[2] || '-'
+  this.enPassant = parts[3] || '-'
 }
 
-function createMove (fromFen, toFen, san, uci, promotion) {
-  const id = makeMoveId(fromFen, toFen, promotion)
-  return {
-    id,
-    fromFen: normalizePositionFen(fromFen),
-    toFen: normalizePositionFen(toFen),
-    san: san || '',
-    uci: uci || '',
-    promotion: promotion || null,
-    comments: []
-  }
+function Move (fromFen, toFen, san, uci, promotion) {
+  this.fromFen = normalizePositionFen(fromFen)
+  this.toFen = normalizePositionFen(toFen)
+  this.san = san || ''
+  this.uci = uci || ''
+  this.promotion = promotion || null
+  this.id = makeMoveId(this.fromFen, this.toFen, this.promotion)
+  this.comments = []
 }
 
-function createRepertoire (id, name, color, rootFen) {
-  return {
-    id,
-    name: name || '',
-    color: color === 'b' ? 'b' : 'w',
-    rootFen: normalizePositionFen(rootFen),
-    citations: [],
-    edges: [],
-    commentOverrides: {},
-    createdAt: Date.now(),
-    updatedAt: Date.now()
-  }
+function Repertoire (id, name, color, rootFen) {
+  this.id = id
+  this.name = name || ''
+  this.color = color === 'b' ? 'b' : 'w'
+  this.rootFen = normalizePositionFen(rootFen)
+  this.citations = []
+  this.edges = []
+  this.commentOverrides = {}
+  this.createdAt = Date.now()
+  this.updatedAt = Date.now()
 }
 
-// SM-2 initial statistic
-function createStatistic (repertoireId, moveId) {
-  return {
-    id: `${repertoireId}|${moveId}`,
-    repertoireId,
-    moveId,
-    right: 0,
-    wrong: 0,
-    finishLine: 0,
-    lastReviewedAt: null,
-    lastWrongAt: null,
-    consecutiveCorrect: 0,
-    ease: 2.5,
-    intervalDays: 0,
-    nextDueAt: Date.now(),
-    recentWrongCount: 0,
-    totalAttempts: 0,
-    updatedAt: Date.now()
-  }
+function Statistic (repertoireId, moveId) {
+  this.id = repertoireId + '|' + moveId
+  this.repertoireId = repertoireId
+  this.moveId = moveId
+  this.right = 0
+  this.wrong = 0
+  this.finishLine = 0
+  this.lastReviewedAt = null
+  this.lastWrongAt = null
+  this.consecutiveCorrect = 0
+  this.ease = 2.5
+  this.intervalDays = 0
+  this.nextDueAt = Date.now()
+  this.recentWrongCount = 0
+  this.totalAttempts = 0
+  this.updatedAt = Date.now()
 }
 
 // IndexedDB open helper — creates empty stores, does not migrate or read yet
@@ -3161,12 +3167,119 @@ function initPhase0 () {
     }
     // Open DB in background so the schema exists; ignore result
     openZeitnotDb().catch(() => {})
+    wireShadowExportButton()
     if (typeof location !== 'undefined' && location.search.includes('phase0test')) {
       runPhase0SelfCheck()
     }
   } catch (e) {
     // Never break the existing app
   }
+}
+
+
+// =============================================================================
+// Phase 1 — Dual-write shadow store (IndexedDB)
+// Old path remains the source of truth for the UI.
+// =============================================================================
+
+function shadowWriteAfterAdd (treeModel, parentPgn, childFen) {
+  // Reconstruct the move that was just added from the current chess state
+  const history = treeModel.chess.history({ verbose: true })
+  if (!history.length) return
+  const last = history[history.length - 1]
+  const fromFen = normalizePositionFen(treeModel.chess.fen()) // wait, after the move the fen is the child
+  // Better: load parent and get from-fen
+  // For simplicity we use the child fen and the last move info
+  const move = new Move(
+    last.from ? /* we need fromFen */ START_FEN : START_FEN, // placeholder, fix below
+    childFen,
+    last.san,
+    last.from + last.to + (last.promotion || ''),
+    last.promotion || null
+  )
+  // We'll do a full walk instead for correctness on add; for Phase 1 a full shadow of current tree is fine and simpler
+  shadowWriteCurrentTree(treeModel)
+}
+
+function shadowWriteRepertoire (treeModel, oldRepertoire) {
+  shadowWriteCurrentTree(treeModel, oldRepertoire)
+}
+
+function shadowWriteCurrentTree (treeModel, oldRepertoire) {
+  openZeitnotDb().then(db => {
+    const tx = db.transaction(['positions', 'moves', 'repertoires'], 'readwrite')
+    const positions = tx.objectStore('positions')
+    const moves = tx.objectStore('moves')
+    const repertoires = tx.objectStore('repertoires')
+
+    const repertoireId = (oldRepertoire && oldRepertoire.id) || 'current-' + Date.now()
+    const rep = new Repertoire(
+      repertoireId,
+      treeModel.repertoireName || (oldRepertoire && oldRepertoire.name) || 'Unnamed',
+      treeModel.repertoireColor || 'w',
+      START_FEN
+    )
+
+    // Walk the tree and collect
+    const visited = new Set()
+    function walk (node) {
+      if (!node || visited.has(node.pgn)) return
+      visited.add(node.pgn)
+      const fen = normalizePositionFen(node.fen || START_FEN)
+      const pos = new Position(fen)
+      positions.put(pos)
+      if (!rep.citations.includes(fen)) rep.citations.push(fen)
+
+      node.children.forEach(child => {
+        const childFen = normalizePositionFen(child.fen)
+        const uci = (child.lastMove && child.lastMove.fromSquare && child.lastMove.toSquare)
+          ? child.lastMove.fromSquare + child.lastMove.toSquare + (child.lastMove.promotion || '')
+          : ''
+        const m = new Move(fen, childFen, child.lastMoveString || '', uci, null)
+        moves.put(m)
+        if (!rep.edges.includes(m.id)) rep.edges.push(m.id)
+        walk(child)
+      })
+    }
+    if (treeModel.rootNode) walk(treeModel.rootNode)
+
+    repertoires.put(rep)
+    tx.oncomplete = () => db.close()
+    tx.onerror = () => db.close()
+  }).catch(() => {})
+}
+
+// Manual export of the shadow store for debugging
+function exportShadowJson () {
+  openZeitnotDb().then(db => {
+    const tx = db.transaction(['positions', 'moves', 'repertoires', 'statistics'], 'readonly')
+    const result = { version: 1, positions: [], moves: [], repertoires: [], statistics: [] }
+    const stores = ['positions', 'moves', 'repertoires', 'statistics']
+    let pending = stores.length
+    stores.forEach(name => {
+      const req = tx.objectStore(name).getAll()
+      req.onsuccess = () => {
+        result[name] = req.result
+        pending--
+        if (pending === 0) {
+          const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' })
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = 'zeitnot-shadow.json'
+          a.click()
+          URL.revokeObjectURL(url)
+          db.close()
+        }
+      }
+    })
+  }).catch(err => console.error('Shadow export failed', err))
+}
+
+// Wire the export button if present
+function wireShadowExportButton () {
+  const btn = document.getElementById('shadowExportButton')
+  if (btn) btn.onclick = exportShadowJson
 }
 
 // Hook into existing startup without changing Main.run signature
