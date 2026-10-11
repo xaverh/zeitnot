@@ -3052,8 +3052,10 @@ function normalizePositionFen (fen) {
 }
 
 // Deterministic edge id
-function makeMoveId (fromFen, toFen, promotion) {
-  return `${fromFen}|${toFen}|${promotion || ''}`
+function makeMoveId (fromFen, toFen, uci) {
+  // Promotion (if any) is the 5th character of UCI (e.g. e7e8q)
+  const promo = (uci && uci.length === 5) ? uci[4] : ''
+  return `${fromFen}|${toFen}|${promo}`
 }
 
 // Prototype-style constructors for the new data shapes
@@ -3062,13 +3064,12 @@ function Position (fen) {
   this.fen = normalizePositionFen(fen)
 }
 
-function Move (fromFen, toFen, san, uci, promotion) {
+function Move (fromFen, toFen, san, uci) {
   this.fromFen = normalizePositionFen(fromFen)
   this.toFen = normalizePositionFen(toFen)
   this.san = san || ''
   this.uci = uci || ''
-  this.promotion = promotion || null
-  this.id = makeMoveId(this.fromFen, this.toFen, this.promotion)
+  this.id = makeMoveId(this.fromFen, this.toFen, this.uci)
   this.comments = []
 }
 
@@ -3178,21 +3179,7 @@ function initPhase0 () {
 // =============================================================================
 
 function shadowWriteAfterAdd (treeModel, parentPgn, childFen) {
-  // Reconstruct the move that was just added from the current chess state
-  const history = treeModel.chess.history({ verbose: true })
-  if (!history.length) return
-  const last = history[history.length - 1]
-  const fromFen = normalizePositionFen(treeModel.chess.fen()) // wait, after the move the fen is the child
-  // Better: load parent and get from-fen
-  // For simplicity we use the child fen and the last move info
-  const move = new Move(
-    last.from ? /* we need fromFen */ START_FEN : START_FEN, // placeholder, fix below
-    childFen,
-    last.san,
-    last.from + last.to + (last.promotion || ''),
-    last.promotion || null
-  )
-  // We'll do a full walk instead for correctness on add; for Phase 1 a full shadow of current tree is fine and simpler
+  // Full tree walk is simpler and correct for Phase 1
   shadowWriteCurrentTree(treeModel)
 }
 
@@ -3232,7 +3219,7 @@ function shadowWriteCurrentTree (treeModel, oldRepertoire) {
         const uci = (child.lastMove && child.lastMove.fromSquare && child.lastMove.toSquare)
           ? child.lastMove.fromSquare + child.lastMove.toSquare + (child.lastMove.promotion || '')
           : ''
-        const m = new Move(fen, childFen, child.lastMoveString || '', uci, null)
+        const m = new Move(fen, childFen, child.lastMoveString || '', uci)
         moves.put(m)
         if (!rep.edges.includes(m.id)) rep.edges.push(m.id)
         walk(child)
