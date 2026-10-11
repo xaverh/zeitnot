@@ -3058,13 +3058,8 @@ function makeMoveId (fromFen, toFen, promotion) {
 
 // Prototype-style constructors for the new data shapes
 function Position (fen) {
-  const normalized = normalizePositionFen(fen)
-  const parts = normalized.split(' ')
-  this.fen = normalized
-  this.piecePlacement = parts[0] || ''
-  this.turn = parts[1] || 'w'
-  this.castling = parts[2] || '-'
-  this.enPassant = parts[3] || '-'
+  // fen is the identity; castling and en-passant live inside it
+  this.fen = normalizePositionFen(fen)
 }
 
 function Move (fromFen, toFen, san, uci, promotion) {
@@ -3212,10 +3207,12 @@ function shadowWriteCurrentTree (treeModel, oldRepertoire) {
     const moves = tx.objectStore('moves')
     const repertoires = tx.objectStore('repertoires')
 
-    const repertoireId = (oldRepertoire && oldRepertoire.id) || 'current-' + Date.now()
+    // Stable ID = repertoire name (one latest version per name)
+    const name = treeModel.repertoireName || (oldRepertoire && oldRepertoire.name) || 'Unnamed'
+    const repertoireId = name
     const rep = new Repertoire(
       repertoireId,
-      treeModel.repertoireName || (oldRepertoire && oldRepertoire.name) || 'Unnamed',
+      name,
       treeModel.repertoireColor || 'w',
       START_FEN
     )
