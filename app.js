@@ -3529,18 +3529,29 @@ function projectGraphToTree (graph, treeModel) {
 
 
 function installTranspositionTargets (treeModel) {
-  treeModel.transpositionTargets = treeModel.transpositionTargets || {}
-  const fenToPgn = treeModel.fenToPgn || {}
-  Object.keys(fenToPgn).forEach(key => {
-    const pgns = fenToPgn[key]
-    if (!pgns || pgns.length < 2) return
+  treeModel.transpositionTargets = {}
+  const byPos = {}
+  const nodes = treeModel.pgnToNode || {}
+  Object.keys(nodes).forEach(pgn => {
+    const node = nodes[pgn]
+    if (!node || !node.fen) return
+    const key = normalizePositionFen(node.fen) || node.fen
+    if (!byPos[key]) byPos[key] = []
+    byPos[key].push(pgn)
+  })
+  Object.keys(byPos).forEach(key => {
+    const pgns = byPos[key]
+    if (pgns.length < 2) return
     const first = pgns[0]
     pgns.slice(1).forEach(pgn => {
-      if (!treeModel.transpositionTargets[pgn]) {
-        treeModel.transpositionTargets[pgn] = first
-      }
+      treeModel.transpositionTargets[pgn] = first
     })
   })
+  // Visible hint so we can see whether the graph path ran
+  if (typeof showStatus === 'function') {
+    const n = Object.keys(treeModel.transpositionTargets).length
+    showStatus(n ? ('Transpositions: ' + n) : 'No transpositions detected')
+  }
 }
 
 // Selecting a transposition badge jumps to the first occurrence
