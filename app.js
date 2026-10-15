@@ -775,8 +775,11 @@ TreeView.prototype.appendNodeEl = function (state, viewInfo, newRow) {
           ? viewInfo.lastMoveVerboseString
           : viewInfo.lastMoveString)
   }
-  const isBadge = this.treeModel.transpositionTargets && this.treeModel.transpositionTargets[viewInfo.pgn]
+  const targets = this.treeModel.transpositionTargets || {}
+  const isBadge = !!targets[viewInfo.pgn]
+  const isTarget = Object.keys(targets).some(k => targets[k] === viewInfo.pgn)
   if (isBadge) label += ' ↔'
+  if (isTarget) label = '⤵ ' + label
   cell.innerText = label
   cell.classList.add(treeClasses.NODE)
   if (isBadge) cell.classList.add(annotationClasses.TRANSPOSITION_NODE)
@@ -3546,7 +3549,27 @@ TreeModel.prototype.selectPgn = function (pgn) {
   originalSelectPgn.call(this, target || pgn)
 }
 
-// Phase 3 graph override disabled; using synchronous legacy load
+const originalBuildNotify = BuildMode.prototype.notifySelectedMetadata
+BuildMode.prototype.notifySelectedMetadata = function () {
+  if (this.pickerController.isModelEmpty()) return
+  const selectedMetadataId = this.pickerController.model.selectedMetadata.id
+  const oldRepertoire = this.store.loadRepertoire(selectedMetadataId)
+  const name = oldRepertoire && oldRepertoire.name
+  if (!name) {
+    originalBuildNotify.call(this)
+    return
+  }
+  const graphStore = new GraphStore()
+  graphStore.loadRepertoire(name).then(graph => {
+    if (graph && projectGraphToTree(graph, this.treeModel)) {
+      this.buildModeView.refresh()
+    } else {
+      this.onLoadRepertoire(oldRepertoire)
+    }
+  }).catch(() => {
+    this.onLoadRepertoire(oldRepertoire)
+  })
+}
 
 
 // =============================================================================
@@ -3571,7 +3594,45 @@ function prioritizeLines (lines, statistics) {
   })
 }
 
-// Phase 4 graph override disabled; using synchronous legacy load
+const originalStudyNotify = StudyMode.prototype.notifySelectedMetadata
+StudyMode.prototype.notifySelectedMetadata = function () {
+  if (this.pickerController.isModelEmpty()) return
+  const selectedMetadataId = this.pickerController.model.selectedMetadata.id
+  const oldRepertoire = this.store.loadRepertoire(selectedMetadataId)
+  const name = oldRepertoire && oldRepertoire.name
+  if (!name) {
+    originalStudyNotify.call(this)
+    return
+  }
+  const graphStore = new GraphStore()
+  graphStore.loadRepertoire(name).then(graph => {
+    let usedGraph = false
+    if (graph && projectGraphToTree(graph, this.treeModel)) {
+      usedGraph = true
+    } else {
+      this.treeModel.loadRepertoire(oldRepertoire)
+    }
+    this.board.setInitialPositionImmediately()
+    this.board.setOrientationForColor(this.treeModel.repertoireColor)
+    const emptyStudyElement = assert(document.getElementById('emptyStudy'))
+    const studyMessage = assert(document.getElementById('studyMessage'))
+    if (this.treeModel.isEmpty()) {
+      emptyStudyElement.classList.remove('hidden')
+      studyMessage.classList.add('hidden')
+      this.lineListStudier.cancelStudy()
+      return
+    }
+    emptyStudyElement.classList.add('hidden')
+    let lines = LineEmitter.emitForModel(this.treeModel)
+    try {
+      const stats = this.store.loadStatistics(selectedMetadataId)
+      lines = prioritizeLines(lines, stats)
+    } catch (e) {}
+    this.lineListStudier.study(lines)
+  }).catch(() => {
+    originalStudyNotify.call(this)
+  })
+}
 
 // Hook into existing startup without changing Main.run signature
 const originalOnLoad = window.onload
