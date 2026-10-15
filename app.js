@@ -3270,10 +3270,142 @@ function wireShadowExportButton () {
   if (btn) btn.onclick = exportShadowJson
 }
 
+
+// =============================================================================
+// Phase 2 — One-time migration of existing localStorage data into IndexedDB
+// Old localStorage remains untouched and is still the source of truth for the UI.
+// =============================================================================
+
+const ZEITNOT_MIGRATION_KEY = 'zeitnot-migration-complete'
+
+function isMigrationComplete (storage) {
+  return storage.getItem(ZEITNOT_MIGRATION_KEY) === '1'
+}
+
+function setMigrationComplete (storage) {
+  storage.setItem(ZEITNOT_MIGRATION_KEY, '1')
+}
+
+function migrateFromLocalStorage () {
+  const storage = window.localStorage
+  if (isMigrationComplete(storage)) return Promise.resolve()
+
+  const repertoiresRaw = storage.getItem('repertoires')
+  if (!repertoiresRaw) {
+    setMigrationComplete(storage)
+    return Promise.resolve()
+  }
+
+  let repertoiresMap
+  try {
+    repertoiresMap = JSON.parse(repertoiresRaw)
+  } catch (e) {
+    setMigrationComplete(storage)
+    return Promise.resolve()
+  }
+
+  const statisticsRaw = storage.getItem('statistics') || '{}'
+  let allStatistics = {}
+  try {
+    allStatistics = JSON.parse(statisticsRaw)
+  } catch (e) {}
+
+  return openZeitnotDb().then(db => {
+    return new Promise((resolve) => {
+      const tx = db.transaction(['positions', 'moves', 'repertoires', 'statistics'], 'readwrite')
+      const positions = tx.objectStore('positions')
+      const moves = tx.objectStore('moves')
+      const repertoires = tx.objectStore('repertoires')
+      const statistics = tx.objectStore('statistics')
+
+      Object.keys(repertoiresMap).forEach(oldId => {
+        const oldRep = repertoiresMap[oldId]
+        if (!oldRep) return
+        const name = oldRep.name || 'Unnamed'
+        const repertoireId = name
+        const rep = new Repertoire(
+          repertoireId,
+          name,
+          oldRep.color || 'w',
+          START_FEN
+        )
+
+        // Build a temporary TreeModel-like walk from the serialized root
+        const root = oldRep.root
+        if (root) {
+          const visited = new Set()
+          function walk (node, parentFen) {
+            if (!node) return
+            const fen = normalizePositionFen(node.fen || START_FEN)
+            const pos = new Position(fen)
+            positions.put(pos)
+            if (!rep.citations.includes(fen)) rep.citations.push(fen)
+
+            const children = node.c || node.children || []
+            children.forEach(child => {
+              const childFen = normalizePositionFen(child.fen)
+              const uci = (child.lmf && child.lmt)
+                ? child.lmf + child.lmt + (child.promotion || '')
+                : ''
+              const m = new Move(fen, childFen, child.lms || '', uci)
+              moves.put(m)
+              if (!rep.edges.includes(m.id)) rep.edges.push(m.id)
+
+              // Attach statistics if we have a matching PGN
+              const statsForRep = allStatistics[oldId] || {}
+              const pgnStats = statsForRep[child.pgn]
+              if (pgnStats) {
+                const stat = new Statistic(repertoireId, m.id)
+                stat.right = pgnStats.rightMoveCount || 0
+                stat.wrong = pgnStats.wrongMoveCount || 0
+                stat.finishLine = pgnStats.finishLineCount || 0
+                stat.totalAttempts = stat.right + stat.wrong
+                stat.consecutiveCorrect = stat.right > 0 && stat.wrong === 0 ? stat.right : 0
+                stat.ease = 2.5
+                stat.intervalDays = 0
+                stat.nextDueAt = Date.now()
+                stat.updatedAt = Date.now()
+                statistics.put(stat)
+              }
+
+              walk(child, childFen)
+            })
+          }
+          walk(root, START_FEN)
+        }
+
+        repertoires.put(rep)
+      })
+
+      tx.oncomplete = () => {
+        db.close()
+        setMigrationComplete(storage)
+        resolve()
+      }
+      tx.onerror = () => {
+        db.close()
+        resolve()
+      }
+    })
+  }).catch(() => {
+    // Do not mark complete on failure so it can retry
+  })
+}
+
+// Call migration once on startup
+function initPhase2 () {
+  try {
+    migrateFromLocalStorage()
+  } catch (e) {
+    // Never break the existing app
+  }
+}
+
 // Hook into existing startup without changing Main.run signature
 const originalOnLoad = window.onload
 window.onload = function () {
   initPhase0()
+  initPhase2()
   if (typeof originalOnLoad === 'function') {
     originalOnLoad()
   }
