@@ -3404,6 +3404,127 @@ function initPhase2 () {
   }
 }
 
+
+// =============================================================================
+// Phase 3 — Read path for Build mode
+// GraphStore loads the repertoire from IndexedDB.
+// A first-occurrence projection rebuilds a TreeModel so the existing TreeView
+// can render it. Study/Review continue to use the legacy localStorage path.
+// =============================================================================
+
+function GraphStore () {}
+
+GraphStore.prototype.loadRepertoire = function (name) {
+  return openZeitnotDb().then(db => {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['repertoires', 'moves'], 'readonly')
+      const repertoires = tx.objectStore('repertoires')
+      const moves = tx.objectStore('moves')
+      const req = repertoires.get(name)
+      req.onsuccess = () => {
+        const rep = req.result
+        if (!rep) {
+          db.close()
+          resolve(null)
+          return
+        }
+        const moveReq = moves.getAll()
+        moveReq.onsuccess = () => {
+          const allMoves = moveReq.result || []
+          const edgeSet = new Set(rep.edges || [])
+          const relevantMoves = allMoves.filter(m => edgeSet.has(m.id))
+          db.close()
+          resolve({ repertoire: rep, moves: relevantMoves })
+        }
+        moveReq.onerror = () => { db.close(); resolve(null) }
+      }
+      req.onerror = () => { db.close(); resolve(null) }
+    })
+  }).catch(() => null)
+}
+
+// Project the graph into a TreeModel using first-occurrence nodes.
+// Later occurrences of the same FEN become simple children for now
+// (transposition badges come in a later phase).
+function projectGraphToTree (graph, treeModel) {
+  if (!graph || !graph.repertoire) return false
+  const rep = graph.repertoire
+  const moves = graph.moves || []
+
+  // Build adjacency: fromFen -> [Move]
+  const byFrom = {}
+  moves.forEach(m => {
+    if (!byFrom[m.fromFen]) byFrom[m.fromFen] = []
+    byFrom[m.fromFen].push(m)
+  })
+
+  treeModel.makeEmpty()
+  treeModel.repertoireName = rep.name
+  treeModel.repertoireColor = rep.color
+
+  const rootFen = normalizePositionFen(START_FEN)
+  const visited = new Set()
+
+  function walk (parentPgn, fromFen) {
+    if (visited.has(fromFen)) return
+    visited.add(fromFen)
+    const outs = byFrom[fromFen] || []
+    outs.forEach(m => {
+      // Reconstruct a chess.js move from UCI so the existing TreeModel can ingest it
+      const chess = new Chess()
+      try {
+        chess.load(fromFen + ' 0 1')
+      } catch (e) {
+        return
+      }
+      const uci = m.uci || ''
+      if (uci.length < 4) return
+      const moveObj = {
+        from: uci.slice(0, 2),
+        to: uci.slice(2, 4),
+        promotion: uci.length === 5 ? uci[4] : undefined
+      }
+      try {
+        chess.move(moveObj)
+      } catch (e) {
+        return
+      }
+      const result = treeModel.addMove(parentPgn, moveObj)
+      if (result && result.success) {
+        const childPgn = treeModel.selectedNode.pgn
+        walk(childPgn, m.toFen)
+      }
+    })
+  }
+
+  walk('', rootFen)
+  return true
+}
+
+// Hook BuildMode to prefer the graph projection when available
+const originalBuildNotify = BuildMode.prototype.notifySelectedMetadata
+BuildMode.prototype.notifySelectedMetadata = function () {
+  if (this.pickerController.isModelEmpty()) return
+  const selectedMetadataId = this.pickerController.model.selectedMetadata.id
+  const oldRepertoire = this.store.loadRepertoire(selectedMetadataId)
+  const name = oldRepertoire && oldRepertoire.name
+  if (!name) {
+    originalBuildNotify.call(this)
+    return
+  }
+  const graphStore = new GraphStore()
+  graphStore.loadRepertoire(name).then(graph => {
+    if (graph && projectGraphToTree(graph, this.treeModel)) {
+      this.buildModeView.refresh()
+    } else {
+      // Fall back to the legacy load
+      this.onLoadRepertoire(oldRepertoire)
+    }
+  }).catch(() => {
+    this.onLoadRepertoire(oldRepertoire)
+  })
+}
+
 // Hook into existing startup without changing Main.run signature
 const originalOnLoad = window.onload
 window.onload = function () {
