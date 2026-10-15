@@ -417,7 +417,8 @@ TreeModel.prototype.addMove = function (pgn, move) {
   }
   // Select the new child node.
   this.selectedNode = childNode
-  // Phase 6: dual-write disabled; graph is the source of truth
+  // Phase 1 dual-write (fire-and-forget, does not affect return)
+  try { shadowWriteAfterAdd(this, pgn, childPosition) } catch (e) { /* ignore */ }
   return {
     success: true,
     failureReason: null
@@ -607,7 +608,8 @@ TreeModel.prototype.loadRepertoire = function (repertoire) {
     }
   }
   this.selectPgn('')
-  // Phase 6: dual-write disabled; graph is the source of truth
+  // Phase 1 dual-write of the whole repertoire (fire-and-forget)
+  try { shadowWriteRepertoire(this, repertoire) } catch (e) { /* ignore */ }
 }
 TreeModel.prototype.parseRecursive = function (node) {
   const children = node.children || node.c
@@ -3280,8 +3282,7 @@ function wireShadowExportButton () {
 const ZEITNOT_MIGRATION_KEY = 'zeitnot-migration-complete'
 
 function isMigrationComplete (storage) {
-  // Phase 6: migration is considered complete; old data is only a fallback
-  return true
+  return storage.getItem(ZEITNOT_MIGRATION_KEY) === '1'
 }
 
 function setMigrationComplete (storage) {
@@ -3474,14 +3475,13 @@ function projectGraphToTree (graph, treeModel) {
   treeModel.makeEmpty()
   treeModel.repertoireName = rep.name
   treeModel.repertoireColor = rep.color
+  treeModel.transpositionTargets = {}
 
   const rootFen = normalizePositionFen(START_FEN)
-  const visited = new Set()
+  const firstPgnForFen = {}
   let added = 0
 
   function walk (parentPgn, fromFen) {
-    if (visited.has(fromFen)) return
-    visited.add(fromFen)
     const outs = byFrom[fromFen] || []
     outs.forEach(m => {
       const chess = loadFenSafe(fromFen)
@@ -3499,16 +3499,29 @@ function projectGraphToTree (graph, treeModel) {
         return
       }
       const result = treeModel.addMove(parentPgn, moveObj)
-      if (result && result.success) {
-        added++
-        const childPgn = treeModel.selectedNode.pgn
-        walk(childPgn, m.toFen)
+      if (!result || !result.success) return
+      added++
+      const childPgn = treeModel.selectedNode.pgn
+      const toFen = m.toFen
+      if (firstPgnForFen[toFen]) {
+        // Later occurrence: badge only, do not expand
+        treeModel.transpositionTargets[childPgn] = firstPgnForFen[toFen]
+      } else {
+        firstPgnForFen[toFen] = childPgn
+        walk(childPgn, toFen)
       }
     })
   }
 
   walk('', rootFen)
   return added > 0
+}
+
+// Selecting a transposition badge jumps to the first occurrence
+const originalSelectPgn = TreeModel.prototype.selectPgn
+TreeModel.prototype.selectPgn = function (pgn) {
+  const target = this.transpositionTargets && this.transpositionTargets[pgn]
+  originalSelectPgn.call(this, target || pgn)
 }
 
 const originalBuildNotify = BuildMode.prototype.notifySelectedMetadata
@@ -3593,36 +3606,6 @@ StudyMode.prototype.notifySelectedMetadata = function () {
     this.lineListStudier.study(lines)
   }).catch(() => {
     originalStudyNotify.call(this)
-  })
-}
-
-
-// =============================================================================
-// Phase 5 — Review mode reads the graph
-// EvaluateMode prefers the graph projection and falls back to the legacy load.
-// =============================================================================
-
-const originalEvaluateNotify = EvaluateMode.prototype.notifySelectedMetadata
-EvaluateMode.prototype.notifySelectedMetadata = function () {
-  if (this.pickerController.isModelEmpty()) return
-  const selectedMetadataId = this.pickerController.model.selectedMetadata.id
-  const oldRepertoire = this.store.loadRepertoire(selectedMetadataId)
-  const name = oldRepertoire && oldRepertoire.name
-  if (!name) {
-    originalEvaluateNotify.call(this)
-    return
-  }
-  const graphStore = new GraphStore()
-  graphStore.loadRepertoire(name).then(graph => {
-    if (graph && projectGraphToTree(graph, this.treeModel)) {
-      this.statistics.setDelegate(new ReviewStatistics(this.store, selectedMetadataId))
-      this.modeView.refresh()
-      setTimeout(() => this.modeView.refresh(), 0)
-    } else {
-      originalEvaluateNotify.call(this)
-    }
-  }).catch(() => {
-    originalEvaluateNotify.call(this)
   })
 }
 
