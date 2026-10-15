@@ -575,13 +575,16 @@ TreeModel.prototype.exportToPgn = function () {
 }
 TreeModel.prototype.makeEmpty = function () {
   this.chess = new Chess()
-  const initialFen = normalizeFen(this.chess.fen(), this.chess.moves().length)
+  const realFen = this.chess.fen()
+  const initialFen = normalizePositionFen(realFen)
+  const numLegal = this.chess.moves().length
   const initialPgn = this.getMoveText()
-  this.rootNode = new TreeNode(null /* parent */, initialFen, initialPgn, this.chess.moves().length, null, '', 0)
+  this.rootNode = new TreeNode(null /* parent */, initialFen, initialPgn, numLegal, null, '', 0)
   this.pgnToNode = {}
   this.pgnToNode[initialPgn] = this.rootNode
   this.fenToPgn = {}
-  this.fenToPgn[initialFen] = [initialPgn]
+  // Keep the legacy map key so existing transposition logic continues to work
+  this.fenToPgn[normalizeFen(realFen, numLegal)] = [initialPgn]
   this.selectedNode = this.rootNode
   this.repertoireColor = 'w'
   this.numNodes = 1
