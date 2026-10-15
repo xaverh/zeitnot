@@ -417,8 +417,7 @@ TreeModel.prototype.addMove = function (pgn, move) {
   }
   // Select the new child node.
   this.selectedNode = childNode
-  // Phase 1 dual-write (fire-and-forget, does not affect return)
-  try { shadowWriteAfterAdd(this, pgn, childPosition) } catch (e) { /* ignore */ }
+  // Phase 6: dual-write disabled; graph is the source of truth
   return {
     success: true,
     failureReason: null
@@ -608,8 +607,7 @@ TreeModel.prototype.loadRepertoire = function (repertoire) {
     }
   }
   this.selectPgn('')
-  // Phase 1 dual-write of the whole repertoire (fire-and-forget)
-  try { shadowWriteRepertoire(this, repertoire) } catch (e) { /* ignore */ }
+  // Phase 6: dual-write disabled; graph is the source of truth
 }
 TreeModel.prototype.parseRecursive = function (node) {
   const children = node.children || node.c
@@ -3282,7 +3280,8 @@ function wireShadowExportButton () {
 const ZEITNOT_MIGRATION_KEY = 'zeitnot-migration-complete'
 
 function isMigrationComplete (storage) {
-  return storage.getItem(ZEITNOT_MIGRATION_KEY) === '1'
+  // Phase 6: migration is considered complete; old data is only a fallback
+  return true
 }
 
 function setMigrationComplete (storage) {
@@ -3594,6 +3593,36 @@ StudyMode.prototype.notifySelectedMetadata = function () {
     this.lineListStudier.study(lines)
   }).catch(() => {
     originalStudyNotify.call(this)
+  })
+}
+
+
+// =============================================================================
+// Phase 5 — Review mode reads the graph
+// EvaluateMode prefers the graph projection and falls back to the legacy load.
+// =============================================================================
+
+const originalEvaluateNotify = EvaluateMode.prototype.notifySelectedMetadata
+EvaluateMode.prototype.notifySelectedMetadata = function () {
+  if (this.pickerController.isModelEmpty()) return
+  const selectedMetadataId = this.pickerController.model.selectedMetadata.id
+  const oldRepertoire = this.store.loadRepertoire(selectedMetadataId)
+  const name = oldRepertoire && oldRepertoire.name
+  if (!name) {
+    originalEvaluateNotify.call(this)
+    return
+  }
+  const graphStore = new GraphStore()
+  graphStore.loadRepertoire(name).then(graph => {
+    if (graph && projectGraphToTree(graph, this.treeModel)) {
+      this.statistics.setDelegate(new ReviewStatistics(this.store, selectedMetadataId))
+      this.modeView.refresh()
+      setTimeout(() => this.modeView.refresh(), 0)
+    } else {
+      originalEvaluateNotify.call(this)
+    }
+  }).catch(() => {
+    originalEvaluateNotify.call(this)
   })
 }
 
