@@ -3534,6 +3534,69 @@ BuildMode.prototype.notifySelectedMetadata = function () {
   })
 }
 
+
+// =============================================================================
+// Phase 4 — Study mode reads the graph
+// Study prefers the graph projection so it only ever follows edges that belong
+// to the current repertoire. Falls back to the legacy load when the projection
+// is empty. When old statistics exist, lines with more wrong moves are studied
+// first.
+// =============================================================================
+
+function prioritizeLines (lines, statistics) {
+  if (!statistics || !statistics.length) return lines
+  const wrongByPgn = {}
+  statistics.forEach(s => {
+    wrongByPgn[s.pgn] = (s.wrongMoveCount || 0)
+  })
+  return lines.slice().sort((a, b) => {
+    // Higher wrong-move count first
+    const wa = wrongByPgn[a.moves.map(m => m.fromSquare + m.toSquare).join('')] || 0
+    const wb = wrongByPgn[b.moves.map(m => m.fromSquare + m.toSquare).join('')] || 0
+    return wb - wa
+  })
+}
+
+const originalStudyNotify = StudyMode.prototype.notifySelectedMetadata
+StudyMode.prototype.notifySelectedMetadata = function () {
+  if (this.pickerController.isModelEmpty()) return
+  const selectedMetadataId = this.pickerController.model.selectedMetadata.id
+  const oldRepertoire = this.store.loadRepertoire(selectedMetadataId)
+  const name = oldRepertoire && oldRepertoire.name
+  if (!name) {
+    originalStudyNotify.call(this)
+    return
+  }
+  const graphStore = new GraphStore()
+  graphStore.loadRepertoire(name).then(graph => {
+    let usedGraph = false
+    if (graph && projectGraphToTree(graph, this.treeModel)) {
+      usedGraph = true
+    } else {
+      this.treeModel.loadRepertoire(oldRepertoire)
+    }
+    this.board.setInitialPositionImmediately()
+    this.board.setOrientationForColor(this.treeModel.repertoireColor)
+    const emptyStudyElement = assert(document.getElementById('emptyStudy'))
+    const studyMessage = assert(document.getElementById('studyMessage'))
+    if (this.treeModel.isEmpty()) {
+      emptyStudyElement.classList.remove('hidden')
+      studyMessage.classList.add('hidden')
+      this.lineListStudier.cancelStudy()
+      return
+    }
+    emptyStudyElement.classList.add('hidden')
+    let lines = LineEmitter.emitForModel(this.treeModel)
+    try {
+      const stats = this.store.loadStatistics(selectedMetadataId)
+      lines = prioritizeLines(lines, stats)
+    } catch (e) {}
+    this.lineListStudier.study(lines)
+  }).catch(() => {
+    originalStudyNotify.call(this)
+  })
+}
+
 // Hook into existing startup without changing Main.run signature
 const originalOnLoad = window.onload
 window.onload = function () {
