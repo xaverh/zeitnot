@@ -598,6 +598,7 @@ TreeModel.prototype.getMoveText = function () {
     .replace(/(?:^|\s)(?:\*|1-0|0-1|1\/2-1\/2)\s*$/, '')
     .trim()
 }
+const originalLoadRepertoire = TreeModel.prototype.loadRepertoire
 TreeModel.prototype.loadRepertoire = function (repertoire) {
   this.makeEmpty()
   if (repertoire) {
@@ -610,6 +611,10 @@ TreeModel.prototype.loadRepertoire = function (repertoire) {
   this.selectPgn('')
   // Phase 1 dual-write of the whole repertoire (fire-and-forget)
   try { shadowWriteRepertoire(this, repertoire) } catch (e) { /* ignore */ }
+}
+TreeModel.prototype.loadRepertoire = function (repertoire) {
+  originalLoadRepertoire.call(this, repertoire)
+  if (typeof installTranspositionTargets === 'function') installTranspositionTargets(this)
 }
 TreeModel.prototype.parseRecursive = function (node) {
   const children = node.children || node.c
@@ -774,8 +779,11 @@ TreeView.prototype.appendNodeEl = function (state, viewInfo, newRow) {
           ? viewInfo.lastMoveVerboseString
           : viewInfo.lastMoveString)
   }
+  const isBadge = this.treeModel.transpositionTargets && this.treeModel.transpositionTargets[viewInfo.pgn]
+  if (isBadge) label += ' ↔'
   cell.innerText = label
   cell.classList.add(treeClasses.NODE)
+  if (isBadge) cell.classList.add(annotationClasses.TRANSPOSITION_NODE)
   cell.onclick = this.treeNodeHandler.onClick.bind(this.treeNodeHandler, viewInfo.pgn)
   cell.classList.toggle(treeClasses.SELECTED_NODE, viewInfo.isSelected)
   if (viewInfo.annotation) {
@@ -3468,8 +3476,9 @@ function projectGraphToTree (graph, treeModel) {
 
   const byFrom = {}
   moves.forEach(m => {
-    if (!byFrom[m.fromFen]) byFrom[m.fromFen] = []
-    byFrom[m.fromFen].push(m)
+    const key = normalizePositionFen(m.fromFen) || m.fromFen
+    if (!byFrom[key]) byFrom[key] = []
+    byFrom[key].push(m)
   })
 
   treeModel.makeEmpty()
@@ -3502,7 +3511,7 @@ function projectGraphToTree (graph, treeModel) {
       if (!result || !result.success) return
       added++
       const childPgn = treeModel.selectedNode.pgn
-      const toFen = m.toFen
+      const toFen = normalizePositionFen(m.toFen) || m.toFen
       if (firstPgnForFen[toFen]) {
         // Later occurrence: badge only, do not expand
         treeModel.transpositionTargets[childPgn] = firstPgnForFen[toFen]
@@ -3514,7 +3523,24 @@ function projectGraphToTree (graph, treeModel) {
   }
 
   walk('', rootFen)
+  installTranspositionTargets(treeModel)
   return added > 0
+}
+
+
+function installTranspositionTargets (treeModel) {
+  treeModel.transpositionTargets = treeModel.transpositionTargets || {}
+  const fenToPgn = treeModel.fenToPgn || {}
+  Object.keys(fenToPgn).forEach(key => {
+    const pgns = fenToPgn[key]
+    if (!pgns || pgns.length < 2) return
+    const first = pgns[0]
+    pgns.slice(1).forEach(pgn => {
+      if (!treeModel.transpositionTargets[pgn]) {
+        treeModel.transpositionTargets[pgn] = first
+      }
+    })
+  })
 }
 
 // Selecting a transposition badge jumps to the first occurrence
