@@ -3409,14 +3409,16 @@ function initPhase2 () {
 // Phase 3 — Read path for Build mode
 // GraphStore loads the repertoire from IndexedDB.
 // A first-occurrence projection rebuilds a TreeModel so the existing TreeView
-// can render it. Study/Review continue to use the legacy localStorage path.
+// can render it. If the projection yields an empty tree we fall back to the
+// legacy load so repertoires never open empty.
+// Study/Review continue to use the legacy localStorage path.
 // =============================================================================
 
 function GraphStore () {}
 
 GraphStore.prototype.loadRepertoire = function (name) {
   return openZeitnotDb().then(db => {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const tx = db.transaction(['repertoires', 'moves'], 'readonly')
       const repertoires = tx.objectStore('repertoires')
       const moves = tx.objectStore('moves')
@@ -3443,15 +3445,27 @@ GraphStore.prototype.loadRepertoire = function (name) {
   }).catch(() => null)
 }
 
-// Project the graph into a TreeModel using first-occurrence nodes.
-// Later occurrences of the same FEN become simple children for now
-// (transposition badges come in a later phase).
+function loadFenSafe (fen) {
+  const chess = new Chess()
+  const candidates = [fen, fen + ' 0 1']
+  // Strip trailing legal-move count if the old normalizer left one
+  const stripped = fen.replace(/(\s[KQkq-]+)(\d+)$/, '$1')
+  if (stripped !== fen) candidates.push(stripped, stripped + ' 0 1')
+  for (const c of candidates) {
+    try {
+      chess.load(c)
+      return chess
+    } catch (e) {}
+  }
+  return null
+}
+
 function projectGraphToTree (graph, treeModel) {
   if (!graph || !graph.repertoire) return false
   const rep = graph.repertoire
   const moves = graph.moves || []
+  if (!moves.length) return false
 
-  // Build adjacency: fromFen -> [Move]
   const byFrom = {}
   moves.forEach(m => {
     if (!byFrom[m.fromFen]) byFrom[m.fromFen] = []
@@ -3464,19 +3478,15 @@ function projectGraphToTree (graph, treeModel) {
 
   const rootFen = normalizePositionFen(START_FEN)
   const visited = new Set()
+  let added = 0
 
   function walk (parentPgn, fromFen) {
     if (visited.has(fromFen)) return
     visited.add(fromFen)
     const outs = byFrom[fromFen] || []
     outs.forEach(m => {
-      // Reconstruct a chess.js move from UCI so the existing TreeModel can ingest it
-      const chess = new Chess()
-      try {
-        chess.load(fromFen + ' 0 1')
-      } catch (e) {
-        return
-      }
+      const chess = loadFenSafe(fromFen)
+      if (!chess) return
       const uci = m.uci || ''
       if (uci.length < 4) return
       const moveObj = {
@@ -3491,6 +3501,7 @@ function projectGraphToTree (graph, treeModel) {
       }
       const result = treeModel.addMove(parentPgn, moveObj)
       if (result && result.success) {
+        added++
         const childPgn = treeModel.selectedNode.pgn
         walk(childPgn, m.toFen)
       }
@@ -3498,10 +3509,9 @@ function projectGraphToTree (graph, treeModel) {
   }
 
   walk('', rootFen)
-  return true
+  return added > 0
 }
 
-// Hook BuildMode to prefer the graph projection when available
 const originalBuildNotify = BuildMode.prototype.notifySelectedMetadata
 BuildMode.prototype.notifySelectedMetadata = function () {
   if (this.pickerController.isModelEmpty()) return
@@ -3517,7 +3527,6 @@ BuildMode.prototype.notifySelectedMetadata = function () {
     if (graph && projectGraphToTree(graph, this.treeModel)) {
       this.buildModeView.refresh()
     } else {
-      // Fall back to the legacy load
       this.onLoadRepertoire(oldRepertoire)
     }
   }).catch(() => {
