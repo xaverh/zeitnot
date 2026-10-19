@@ -3751,6 +3751,50 @@ BuildMode.prototype.onKeyDown = function (e) {
   originalBuildKey.call(this, e)
 }
 
+
+function wireNagPanel (treeModel, view) {
+  const panel = document.getElementById('nagPanel')
+  if (!panel || panel._wired) return
+  panel._wired = true
+  panel.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-nag]')
+    if (!btn) return
+    const raw = btn.getAttribute('data-nag')
+    const code = raw === '' ? null : Number(raw)
+    setNodeNag(treeModel, code)
+    view.refresh()
+    highlightNagPanel(treeModel)
+  })
+}
+
+function highlightNagPanel (treeModel) {
+  const panel = document.getElementById('nagPanel')
+  if (!panel) return
+  const current = treeModel.selectedNode && treeModel.selectedNode.nag
+  panel.querySelectorAll('button[data-nag]').forEach(btn => {
+    const raw = btn.getAttribute('data-nag')
+    const code = raw === '' ? null : Number(raw)
+    btn.classList.toggle('active', code === current)
+  })
+}
+
+// Call from BuildMode after construction
+const originalBuildPostEnter = BuildMode.prototype.postEnter
+BuildMode.prototype.postEnter = function () {
+  originalBuildPostEnter.call(this)
+  wireNagPanel(this.treeModel, this.buildModeView)
+  highlightNagPanel(this.treeModel)
+}
+
+// Refresh highlight whenever the tree view refreshes in build
+const originalTreeRefresh = TreeView.prototype.refresh
+TreeView.prototype.refresh = function () {
+  originalTreeRefresh.call(this)
+  if (this.treeModel && document.getElementById('nagPanel')) {
+    highlightNagPanel(this.treeModel)
+  }
+}
+
 // Hook into existing startup without changing Main.run signature
 const originalOnLoad = window.onload
 window.onload = function () {
