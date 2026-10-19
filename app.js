@@ -260,7 +260,9 @@ TreeNode.prototype.createViewInfo = function (selectedNode, pgnToNode, fenToPgn,
     childPgns: this.children.map(c => c.pgn),
     childMoves: this.children.map(c => c.lastMove),
     isSelected: this.pgn === selectedNode.pgn,
-    annotation: annotator.annotate(this, repertoireColor, pgnToNode, fenToPgn)
+    annotation: annotator.annotate(this, repertoireColor, pgnToNode, fenToPgn),
+    nag: this.nag || null,
+    comment: this.comment || ''
   }
 }
 TreeNode.prototype.getParentOrSelf = function () {
@@ -778,9 +780,12 @@ TreeView.prototype.appendNodeEl = function (state, viewInfo, newRow) {
   const targets = this.treeModel.transpositionTargets || {}
   const isBadge = !!targets[viewInfo.pgn]
   const isTarget = Object.keys(targets).some(k => targets[k] === viewInfo.pgn)
+  if (viewInfo.nag) label += nagSymbol(viewInfo.nag)
+  if (viewInfo.comment) label += ' 💬'
   if (isBadge) label += ' ↔'
   if (isTarget) label = '⤵ ' + label
   cell.innerText = label
+  if (viewInfo.comment) cell.title = viewInfo.comment
   cell.classList.add(treeClasses.NODE)
   if (isBadge) cell.classList.add(annotationClasses.TRANSPOSITION_NODE)
   cell.onclick = this.treeNodeHandler.onClick.bind(this.treeNodeHandler, viewInfo.pgn)
@@ -3632,6 +3637,118 @@ StudyMode.prototype.notifySelectedMetadata = function () {
   }).catch(() => {
     originalStudyNotify.call(this)
   })
+}
+
+
+// =============================================================================
+// NAG and comments
+// Shared base lives on the Move; repertoire-specific overrides live on the
+// Repertoire. The tree shows the effective value for the current repertoire.
+// =============================================================================
+
+const NAG_SYMBOLS = {
+  1: '!',
+  2: '?',
+  3: '!!',
+  4: '??',
+  5: '!?',
+  6: '?!',
+  7: '□',
+  10: '=',
+  13: '∞',
+  14: '⩲',
+  15: '⩱',
+  16: '±',
+  17: '∓',
+  18: '+-',
+  19: '-+'
+}
+
+function nagSymbol (code) {
+  return NAG_SYMBOLS[code] ? ' ' + NAG_SYMBOLS[code] : ''
+}
+
+function setNodeNag (treeModel, code) {
+  if (!treeModel.selectedNode) return
+  treeModel.selectedNode.nag = code || null
+  persistNodeAnnotation(treeModel)
+}
+
+function setNodeComment (treeModel, text) {
+  if (!treeModel.selectedNode) return
+  treeModel.selectedNode.comment = text || ''
+  persistNodeAnnotation(treeModel)
+}
+
+function persistNodeAnnotation (treeModel) {
+  const node = treeModel.selectedNode
+  if (!node || !node.parent) return
+  const fromFen = normalizePositionFen(node.parent.fen)
+  const toFen = normalizePositionFen(node.fen)
+  const uci = (node.lastMove && node.lastMove.fromSquare && node.lastMove.toSquare)
+    ? node.lastMove.fromSquare + node.lastMove.toSquare + (node.lastMove.promotion || '')
+    : ''
+  const moveId = makeMoveId(fromFen, toFen, uci)
+  const repName = treeModel.repertoireName || 'Unnamed'
+  openZeitnotDb().then(db => {
+    const tx = db.transaction(['moves', 'repertoires'], 'readwrite')
+    const moves = tx.objectStore('moves')
+    const repertoires = tx.objectStore('repertoires')
+    const mreq = moves.get(moveId)
+    mreq.onsuccess = () => {
+      let m = mreq.result
+      if (!m) {
+        m = new Move(fromFen, toFen, node.lastMoveString || '', uci)
+      }
+      m.nag = node.nag || null
+      m.comments = node.comment ? [node.comment] : []
+      moves.put(m)
+    }
+    const rreq = repertoires.get(repName)
+    rreq.onsuccess = () => {
+      let rep = rreq.result
+      if (!rep) {
+        rep = new Repertoire(repName, repName, treeModel.repertoireColor || 'w', START_FEN)
+      }
+      rep.commentOverrides = rep.commentOverrides || {}
+      rep.commentOverrides[moveId] = {
+        nag: node.nag || null,
+        comment: node.comment || ''
+      }
+      repertoires.put(rep)
+    }
+    tx.oncomplete = () => db.close()
+    tx.onerror = () => db.close()
+  }).catch(() => {})
+}
+
+// Build mode: n cycles common NAGs, c prompts for a comment
+const originalBuildKey = BuildMode.prototype.onKeyDown
+BuildMode.prototype.onKeyDown = function (e) {
+  if (this.renameInput && this.renameInput.isFocused()) {
+    return originalBuildKey.call(this, e)
+  }
+  if (e.key === 'n' || e.key === 'N') {
+    const order = [null, 1, 2, 3, 4, 5, 6]
+    const current = this.treeModel.selectedNode && this.treeModel.selectedNode.nag
+    const idx = order.indexOf(current)
+    const next = order[(idx + 1) % order.length]
+    setNodeNag(this.treeModel, next)
+    this.buildModeView.refresh()
+    e.preventDefault()
+    return
+  }
+  if (e.key === 'c' || e.key === 'C') {
+    const current = (this.treeModel.selectedNode && this.treeModel.selectedNode.comment) || ''
+    const text = window.prompt('Comment', current)
+    if (text !== null) {
+      setNodeComment(this.treeModel, text.trim())
+      this.buildModeView.refresh()
+    }
+    e.preventDefault()
+    return
+  }
+  originalBuildKey.call(this, e)
 }
 
 // Hook into existing startup without changing Main.run signature
