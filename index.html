@@ -60,19 +60,36 @@
           <img id="buildTreeExport" class="treeExport" src="img/export.svg" title="Download this repertoire as a PGN file">
         </div>
         <div id="nagPanel" class="nagPanel">
-          <span class="nagLabel">Glyph</span>
-          <button type="button" data-nag="1" title="Good move">!</button>
-          <button type="button" data-nag="3" title="Brilliant move">!!</button>
-          <button type="button" data-nag="5" title="Interesting move">!?</button>
-          <button type="button" data-nag="6" title="Dubious move">?!</button>
-          <button type="button" data-nag="2" title="Mistake">?</button>
-          <button type="button" data-nag="4" title="Blunder">??</button>
-          <button type="button" data-nag="10" title="Equal">=</button>
-          <button type="button" data-nag="14" title="White is slightly better">⩲</button>
-          <button type="button" data-nag="15" title="Black is slightly better">⩱</button>
-          <button type="button" data-nag="16" title="White is better">±</button>
-          <button type="button" data-nag="17" title="Black is better">∓</button>
-          <button type="button" data-nag="" title="Clear glyph">×</button>
+          <div class="nagGroup">
+            <span class="nagLabel">Move</span>
+            <button type="button" data-nag="1" title="Good move">!</button>
+            <button type="button" data-nag="3" title="Brilliant move">!!</button>
+            <button type="button" data-nag="5" title="Interesting move">!?</button>
+            <button type="button" data-nag="6" title="Dubious move">?!</button>
+            <button type="button" data-nag="2" title="Mistake">?</button>
+            <button type="button" data-nag="4" title="Blunder">??</button>
+            <button type="button" data-nag="7" title="Only move">□</button>
+            <button type="button" data-nag="22" title="Zugzwang">⨀</button>
+          </div>
+          <div class="nagGroup">
+            <span class="nagLabel">Position</span>
+            <button type="button" data-nag="10" title="Equal">=</button>
+            <button type="button" data-nag="13" title="Unclear">∞</button>
+            <button type="button" data-nag="14" title="White is slightly better">⩲</button>
+            <button type="button" data-nag="15" title="Black is slightly better">⩱</button>
+            <button type="button" data-nag="16" title="White is better">±</button>
+            <button type="button" data-nag="17" title="Black is better">∓</button>
+            <button type="button" data-nag="18" title="White is winning">+-</button>
+            <button type="button" data-nag="19" title="Black is winning">-+</button>
+          </div>
+          <div class="nagGroup">
+            <span class="nagLabel">Other</span>
+            <button type="button" data-nag="36" title="Initiative">↑</button>
+            <button type="button" data-nag="40" title="Attack">↑</button>
+            <button type="button" data-nag="32" title="Development">↑↑</button>
+            <button type="button" data-nag="146" title="Novelty">N</button>
+            <button type="button" data-nag="" title="Clear glyph">×</button>
+          </div>
         </div>
         <div id="emptyBuild" class="helpText hidden">
           <p>Your repertoire is empty!

@@ -3661,7 +3661,12 @@ const NAG_SYMBOLS = {
   16: '±',
   17: '∓',
   18: '+-',
-  19: '-+'
+  19: '-+',
+  22: '⨀',
+  32: '↑↑',
+  36: '↑',
+  40: '↑',
+  146: 'N'
 }
 
 function nagSymbol (code) {
@@ -3778,7 +3783,6 @@ function highlightNagPanel (treeModel) {
   })
 }
 
-// Call from BuildMode after construction
 const originalBuildPostEnter = BuildMode.prototype.postEnter
 BuildMode.prototype.postEnter = function () {
   originalBuildPostEnter.call(this)
@@ -3786,7 +3790,6 @@ BuildMode.prototype.postEnter = function () {
   highlightNagPanel(this.treeModel)
 }
 
-// Refresh highlight whenever the tree view refreshes in build
 const originalTreeRefresh = TreeView.prototype.refresh
 TreeView.prototype.refresh = function () {
   originalTreeRefresh.call(this)
