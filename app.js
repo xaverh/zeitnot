@@ -261,7 +261,8 @@ TreeNode.prototype.createViewInfo = function (selectedNode, pgnToNode, fenToPgn,
     childMoves: this.children.map(c => c.lastMove),
     isSelected: this.pgn === selectedNode.pgn,
     annotation: annotator.annotate(this, repertoireColor, pgnToNode, fenToPgn),
-    nag: this.nag || null,
+    moveNag: this.moveNag || null,
+    positionNag: this.positionNag || null,
     comment: this.comment || ''
   }
 }
@@ -780,7 +781,8 @@ TreeView.prototype.appendNodeEl = function (state, viewInfo, newRow) {
   const targets = this.treeModel.transpositionTargets || {}
   const isBadge = !!targets[viewInfo.pgn]
   const isTarget = Object.keys(targets).some(k => targets[k] === viewInfo.pgn)
-  if (viewInfo.nag) label += nagSymbol(viewInfo.nag)
+  if (viewInfo.moveNag) label += nagSymbol(viewInfo.moveNag)
+  if (viewInfo.positionNag) label += nagSymbol(viewInfo.positionNag)
   if (viewInfo.comment) label += ' 💬'
   if (isBadge) label += ' ↔'
   if (isTarget) label = '⤵ ' + label
@@ -3081,6 +3083,8 @@ function makeMoveId (fromFen, toFen, uci) {
 function Position (fen) {
   // fen is the identity; castling and en-passant live inside it
   this.fen = normalizePositionFen(fen)
+  this.nag = null
+  this.comments = []
 }
 
 function Move (fromFen, toFen, san, uci) {
@@ -3089,6 +3093,7 @@ function Move (fromFen, toFen, san, uci) {
   this.san = san || ''
   this.uci = uci || ''
   this.id = makeMoveId(this.fromFen, this.toFen, this.uci)
+  this.nag = null
   this.comments = []
 }
 
@@ -3673,9 +3678,20 @@ function nagSymbol (code) {
   return NAG_SYMBOLS[code] ? ' ' + NAG_SYMBOLS[code] : ''
 }
 
+const MOVE_NAGS = new Set([1, 2, 3, 4, 5, 6, 7, 22, 32, 36, 40, 146])
+const POSITION_NAGS = new Set([10, 13, 14, 15, 16, 17, 18, 19])
+
+function isMoveNag (code) { return MOVE_NAGS.has(code) }
+function isPositionNag (code) { return POSITION_NAGS.has(code) }
+
 function setNodeNag (treeModel, code) {
-  if (!treeModel.selectedNode) return
-  treeModel.selectedNode.nag = code || null
+  const node = treeModel.selectedNode
+  if (!node || code == null) return
+  if (isMoveNag(code)) {
+    node.moveNag = node.moveNag === code ? null : code
+  } else if (isPositionNag(code)) {
+    node.positionNag = node.positionNag === code ? null : code
+  }
   persistNodeAnnotation(treeModel)
 }
 
@@ -3696,7 +3712,7 @@ function persistNodeAnnotation (treeModel) {
   const moveId = makeMoveId(fromFen, toFen, uci)
   const repName = treeModel.repertoireName || 'Unnamed'
   openZeitnotDb().then(db => {
-    const tx = db.transaction(['moves', 'repertoires'], 'readwrite')
+    const tx = db.transaction(['moves', 'positions', 'repertoires'], 'readwrite')
     const moves = tx.objectStore('moves')
     const repertoires = tx.objectStore('repertoires')
     const mreq = moves.get(moveId)
@@ -3705,9 +3721,12 @@ function persistNodeAnnotation (treeModel) {
       if (!m) {
         m = new Move(fromFen, toFen, node.lastMoveString || '', uci)
       }
-      m.nag = node.nag || null
+      m.nag = node.moveNag || null
       m.comments = node.comment ? [node.comment] : []
       moves.put(m)
+      const pos = new Position(toFen)
+      pos.nag = node.positionNag || null
+      tx.objectStore('positions').put(pos)
     }
     const rreq = repertoires.get(repName)
     rreq.onsuccess = () => {
@@ -3717,7 +3736,8 @@ function persistNodeAnnotation (treeModel) {
       }
       rep.commentOverrides = rep.commentOverrides || {}
       rep.commentOverrides[moveId] = {
-        nag: node.nag || null,
+        moveNag: node.moveNag || null,
+        positionNag: node.positionNag || null,
         comment: node.comment || ''
       }
       repertoires.put(rep)
@@ -3765,7 +3785,8 @@ function wireNagPanel (treeModel, view) {
     const btn = e.target.closest('button[data-nag]')
     if (!btn) return
     const raw = btn.getAttribute('data-nag')
-    const code = raw === '' ? null : Number(raw)
+    if (raw === '') return
+    const code = Number(raw)
     setNodeNag(treeModel, code)
     view.refresh()
     highlightNagPanel(treeModel)
@@ -3775,11 +3796,15 @@ function wireNagPanel (treeModel, view) {
 function highlightNagPanel (treeModel) {
   const panel = document.getElementById('nagPanel')
   if (!panel) return
-  const current = treeModel.selectedNode && treeModel.selectedNode.nag
+  const node = treeModel.selectedNode
+  const moveNag = node && node.moveNag
+  const positionNag = node && node.positionNag
   panel.querySelectorAll('button[data-nag]').forEach(btn => {
     const raw = btn.getAttribute('data-nag')
-    const code = raw === '' ? null : Number(raw)
-    btn.classList.toggle('active', code === current)
+    if (raw === '') return
+    const code = Number(raw)
+    const active = code === moveNag || code === positionNag
+    btn.classList.toggle('active', active)
   })
 }
 
